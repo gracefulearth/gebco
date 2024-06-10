@@ -3,43 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/owlpinetech/pixi"
+	pixigebco "github.com/owlpinetech/pixi_gebco"
 	"github.com/rngoodner/gtiff"
 )
-
-const (
-	ArcSecIncrement int = 15 // The number of arc seconds each pixel is spaced apart from each neighboring pixel
-)
-
-type GebcoArc struct {
-	Degree int
-	Minute int
-	Second int
-}
-
-func (g GebcoArc) String() string {
-	return fmt.Sprintf("%d°%d'%d\"", g.Degree, g.Minute, g.Second)
-}
-
-func (g GebcoArc) ToDecimal() float64 {
-	return float64(g.Degree) + (float64(g.Minute) / 60) + (float64(g.Second) / (3600))
-}
-
-type GebcoTile struct {
-	fileName   string
-	northStart GebcoArc
-	westStart  GebcoArc
-}
-
-func (g GebcoTile) String() string {
-	return fmt.Sprintf("gebco_tile_north(%s)_west(%s) - %s", g.northStart, g.westStart, g.fileName)
-}
 
 func main() {
 	tiffsPath := flag.String("src", "./", "Input path to GEBCO GeoTIFF files")
@@ -53,7 +26,7 @@ func main() {
 		return
 	}
 
-	tiles := []GebcoTile{}
+	tiles := []pixigebco.GebcoTile{}
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".tif") {
 			fname, _ := strings.CutSuffix(file.Name(), ".tif")
@@ -68,15 +41,27 @@ func main() {
 				fmt.Println("failed to extract west from gebco file name:", err)
 				return
 			}
-			tile := GebcoTile{
-				fileName:   file.Name(),
-				northStart: GebcoArc{Degree: int(northDeg)},
-				westStart:  GebcoArc{Degree: int(westDeg)},
+			tile := pixigebco.GebcoTile{
+				FileName:   file.Name(),
+				NorthStart: pixigebco.GebcoArc{Degree: int(northDeg)},
+				WestStart:  pixigebco.GebcoArc{Degree: int(westDeg)},
 			}
 			tiles = append(tiles, tile)
 			fmt.Println(tile)
 		}
 	}
+	// sort the north to south, west to east
+	slices.SortFunc(tiles, func(t1 pixigebco.GebcoTile, t2 pixigebco.GebcoTile) int {
+		if t1.NorthStart.Degree == t2.NorthStart.Degree {
+			if t1.WestStart.Degree < t2.WestStart.Degree {
+				return -1
+			}
+			return 1
+		} else if t1.NorthStart.Degree < t2.NorthStart.Degree {
+			return 1
+		}
+		return -1
+	})
 
 	// open append pixi file
 	gebcoSummary := pixi.Summary{
@@ -84,14 +69,10 @@ func main() {
 			"dimOne": "longitude",
 			"dimTwo": "latitude",
 		},
-		Datasets: []pixi.DataSet{
-			{
-				Separated:   false,
-				Compression: pixi.CompressionGzip,
-				Dimensions:  []pixi.Dimension{{Size: 86400, TileSize: 21600}, {Size: 43200, TileSize: 21600}},
-				Fields:      []pixi.Field{{Name: "elevation", Type: pixi.FieldInt16}},
-			},
-		},
+		Separated:   false,
+		Compression: pixi.CompressionFlate,
+		Dimensions:  []pixi.Dimension{{Size: 86400, TileSize: 21600 / 4}, {Size: 43200, TileSize: 21600 / 4}},
+		Fields:      []pixi.Field{{Name: "elevation", Type: pixi.FieldInt16}},
 	}
 	file, err := os.Create(*pixiPath)
 	if err != nil {
@@ -100,46 +81,69 @@ func main() {
 	}
 	defer file.Close()
 
-	err = pixi.WriteSummary(file, gebcoSummary)
-	if err != nil {
-		fmt.Println("failed to write gebco pixi summary:", err)
-		return
-	}
-	offset, err := file.Seek(0, io.SeekCurrent)
-	if err != nil {
-		fmt.Println("failed to seek to start of data:", err)
-		return
-	}
-
-	gebcoAppend, err := pixi.NewAppendDataset(gebcoSummary.Datasets[0], file, 4, offset)
+	gebcoAppend, err := pixi.NewAppendDataset(gebcoSummary, file, 4)
 	if err != nil {
 		fmt.Println("failed to initialize gebco pixi dataset for writing:", err)
 		return
 	}
 
+	xTiles := gebcoAppend.Dimensions[0].Tiles()
+	yTiles := gebcoAppend.Dimensions[1].Tiles()
+	xTilesPerGebco := xTiles / 4
+	yTilesPerGebco := yTiles / 2
+	fmt.Println("xTilesPerGebco:", xTilesPerGebco)
+	fmt.Println("yTilesPerGebco:", yTilesPerGebco)
+
 	// read geotiff and write to pixi
-	for _, geotiff := range tiles {
-		gFile, err := os.Open(filepath.Join(*tiffsPath, geotiff.fileName))
-		if err != nil {
-			fmt.Println("failed to open geotiff file:", err)
-			return
-		}
+	currentGeoInd := -1
+	currentTiff := pixigebco.GebcoTile{}
+	data := []uint16{}
+	for yTile := 0; yTile < gebcoAppend.Dimensions[1].Tiles(); yTile++ {
+		for xTile := 0; xTile < gebcoAppend.Dimensions[0].Tiles(); xTile++ {
+			geotiffInd := xTile/xTilesPerGebco + yTile/yTilesPerGebco*xTilesPerGebco
+			if geotiffInd != currentGeoInd {
+				currentTiff = tiles[geotiffInd]
+				gFile, err := os.Open(filepath.Join(*tiffsPath, currentTiff.FileName))
+				if err != nil {
+					fmt.Println("failed to open geotiff file:", err)
+					return
+				}
 
-		tags, header, err := gtiff.ReadTags(gFile)
-		if err != nil {
-			fmt.Println("failed to read geotiff tags:", err)
-			return
-		}
+				tags, header, err := gtiff.ReadTags(gFile)
+				if err != nil {
+					fmt.Println("failed to read geotiff tags:", err)
+					return
+				}
+				data, err = gtiff.ReadData16(gFile, header, tags)
+				if err != nil {
+					fmt.Println("failed to read geotiff data:", err)
+					return
+				}
+				fmt.Printf("loaded tile: %s, %s with size: %d\n", currentTiff.NorthStart, currentTiff.WestStart, len(data))
+				currentGeoInd = geotiffInd
+			}
 
-		tileX := (geotiff.westStart.Degree + 180) / 90
-		tileY := geotiff.northStart.Degree / 90
-		fmt.Println("x, y -> ps -> comp -> photo -> w, h", tileX, tileY, tags.BitsPerSample, tags.Compression, tags.PhotometricInterpretation, tags.ImageWidth, tags.ImageLength)
-		data, _ := gtiff.ReadData16(gFile, header, tags)
-		fmt.Println("data size:", len(data))
-		for i, e := range data {
-			x := i%int(tags.ImageWidth) + (tileX * int(tags.ImageWidth))
-			y := i/int(tags.ImageLength) + (tileY * int(tags.ImageLength))
-			gebcoAppend.SetSampleField([]uint{uint(x), uint(y)}, 0, int16(e))
+			geoTileX := (currentTiff.WestStart.Degree + 180) / 90
+			geoTileY := (-currentTiff.NorthStart.Degree / 90) + 1
+			geoSubTileX := xTile % xTilesPerGebco
+			geoSubTileY := yTile % xTilesPerGebco
+			fmt.Printf("geoX: %d, geoY: %d, geoSubX: %d, geoSubY: %d, x: %d, y: %d\n", geoTileX, geoTileY, geoSubTileX, geoSubTileY, xTile, yTile)
+			for yPix := 0; yPix < int(gebcoAppend.Dimensions[1].TileSize); yPix++ {
+				for xPix := 0; xPix < int(gebcoAppend.Dimensions[0].TileSize); xPix++ {
+					gx := geoSubTileX*int(gebcoAppend.Dimensions[0].TileSize) + xPix
+					gy := geoSubTileY*int(gebcoAppend.Dimensions[1].TileSize) + yPix
+					px := uint(xTile*int(gebcoAppend.Dimensions[0].TileSize) + xPix)
+					py := uint(yTile*int(gebcoAppend.Dimensions[1].TileSize) + yPix)
+					d := data[gx+gy*21600]
+					err := gebcoAppend.SetSampleField([]uint{px, py}, 0, int16(d))
+					if err != nil {
+						fmt.Printf("Unable to set pixel at %d,%d (tiff %d @ %d,%d) - %v\n", px, py, currentGeoInd, gx, gy, err)
+						return
+					}
+				}
+			}
 		}
 	}
+
+	gebcoAppend.Finalize()
 }
