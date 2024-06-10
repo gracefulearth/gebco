@@ -20,5 +20,7 @@ github.com/owlpinetech/pixi v0.0.9 h1:t45g1vWllsWUbnBCTMt9kn998zCWANB3PuSAZCKc03
 github.com/owlpinetech/pixi v0.0.9/go.mod h1:WsvwjO1Lvdp2dum+R0YCTriZvdhMDJYEUtvpyV1+hLQ=
 github.com/owlpinetech/pixi v0.0.10 h1:fWDkRrH2AZRIX9+bGbUjQbBEZTO1LN+9gEYn205QrPo=
 github.com/owlpinetech/pixi v0.0.10/go.mod h1:WsvwjO1Lvdp2dum+R0YCTriZvdhMDJYEUtvpyV1+hLQ=
+github.com/owlpinetech/pixi v0.0.11 h1:S75N6Dd2XjZFioO+gCQqEUGE13Okgt8mHaHO8MRk7VY=
+github.com/owlpinetech/pixi v0.0.11/go.mod h1:WsvwjO1Lvdp2dum+R0YCTriZvdhMDJYEUtvpyV1+hLQ=
 github.com/rngoodner/gtiff v0.2.1 h1:9lui38EcANf8BOWS3VSvEBwThHePD5mlZXr5zAZKELc=
 github.com/rngoodner/gtiff v0.2.1/go.mod h1:ripAFC4AqsD0WRCvlOVavAGdmg259A/fvOK8lwVF3q0=
