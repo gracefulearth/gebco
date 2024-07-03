@@ -84,8 +84,8 @@ func main() {
 				maxData = final
 			}
 			img.SetGray16(int(xTile), int(yTile), color.Gray16{uint16(avg)})
-			fmt.Println("tile done", xTile, yTile)
 		}
+		fmt.Println("row done", xTile)
 	}
 
 	fmt.Println("normalizing...")
