@@ -32,16 +32,16 @@ func main() {
 	defer file.Close()
 
 	// read pixi meta
-	summary, err := pixi.ReadSummary(file)
+	pixiGebcoTile, err := pixi.ReadPixi(file)
 	if err != nil {
 		fmt.Println("Could not read pixi file summary:", err)
 		return
 	}
 
-	fmt.Println(summary.TileBytes)
+	fmt.Println("pixi gebco tile data size", pixiGebcoTile.Layers[0].DataSize())
 
 	// read pixi data into image
-	readData, err := pixi.ReadAppend(file, summary, 4)
+	readData, err := pixi.ReadAppend(file, pixiGebcoTile, 4)
 	if err != nil {
 		fmt.Println("Failed to open pixi cache reader", err)
 		return

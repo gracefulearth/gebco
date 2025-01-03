@@ -114,7 +114,6 @@ func main() {
 
 			binary.BigEndian.PutUint16(byteBuf, uint16(final))
 			img.SetNRGBA(ix, iy, color.NRGBA{byteBuf[0], byteBuf[1], 0, 255})
-			//fmt.Println("set pixel", ix, iy, x, y, fp.X(), fp.Y(), fp.Face())
 		}
 	}
 

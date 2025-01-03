@@ -3,18 +3,69 @@ package pixigebco
 import (
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 )
 
 const (
 	ArcSecIncrement int = 15 // The number of arc seconds each pixel is spaced apart from each neighboring pixel
 
-	TotalWidth  int = 86400                    // The number of pixels across a strip of latitude in the GEBCO dataset. 86400 pixels.
-	TotalHeight int = 43200                    // The number of pixels along a strip of longitude in the GEBCO dataset. 43200 pixels.
+	GtiffTileWidth  int = 21600
+	GtiffTileHeight int = 21600
+
+	TotalWidth  int = 4 * GtiffTileWidth       // The number of pixels across a strip of latitude in the GEBCO dataset. 86400 pixels.
+	TotalHeight int = 2 * GtiffTileHeight      // The number of pixels along a strip of longitude in the GEBCO dataset. 43200 pixels.
 	TotalPixels     = TotalWidth * TotalHeight // The total number of pixels in the GEBCO dataset.
 
 	PixelsPerMinute = 60 / ArcSecIncrement
 	PixelsPerDegree = 60 * PixelsPerMinute
 )
+
+func SplitGebcoFileName(fileName string) (year int, north int, south int, west int, east int, err error) {
+	// split by underscore
+	split := strings.Split(fileName, "_")
+	for ind, subStr := range split {
+		// year will be the next one!
+		if subStr == "gebco" {
+			maybeYear, err := strconv.ParseInt(split[ind+1], 0, 0)
+			if err == nil {
+				year = int(maybeYear)
+			}
+		}
+
+		// otherwise, look for degrees
+		if strings.HasPrefix(subStr, "n") {
+			northMaybe, err := parseDegreeInt(subStr)
+			if err == nil {
+				north = northMaybe
+			}
+		}
+		if strings.HasPrefix(subStr, "s") {
+			southMaybe, err := parseDegreeInt(subStr)
+			if err == nil {
+				south = southMaybe
+			}
+		}
+		if strings.HasPrefix(subStr, "e") {
+			eastMaybe, err := parseDegreeInt(subStr)
+			if err == nil {
+				east = eastMaybe
+			}
+		}
+		if strings.HasPrefix(subStr, "w") {
+			westMaybe, err := parseDegreeInt(subStr)
+			if err == nil {
+				west = westMaybe
+			}
+		}
+	}
+	return
+}
+
+func parseDegreeInt(str string) (int, error) {
+	res, err := strconv.ParseInt(strings.Split(str[1:], ".")[0], 10, 64)
+	return int(res), err
+}
 
 type GebcoArc struct {
 	Degree int
