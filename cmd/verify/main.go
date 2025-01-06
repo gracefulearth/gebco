@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,11 +17,11 @@ import (
 
 func main() {
 	tiffsPath := flag.String("geotiff", "./", "Input path to GEBCO GeoTIFF files")
-	pixiPath := flag.String("pixi", "./out.pixi", "Output path to save the Pixi dataset")
+	pixiPath := flag.String("pixi", "", "Output path to save the Pixi dataset")
 	flag.Parse()
 
-	if *tiffsPath == "" {
-		fmt.Println("No image provided, please use -src flag.")
+	if *pixiPath == "" {
+		fmt.Println("Must specify a path to the Pixi GEBCO file")
 		return
 	}
 
@@ -31,23 +32,12 @@ func main() {
 	}
 	defer file.Close()
 
-	// read pixi meta
-	pixiGebcoTile, err := pixi.ReadPixi(file)
-	if err != nil {
-		fmt.Println("Could not read pixi file summary:", err)
-		return
-	}
-
-	fmt.Println("pixi gebco tile data size", pixiGebcoTile.Layers[0].DataSize())
-
-	// read pixi data into image
-	readData, err := pixi.ReadAppend(file, pixiGebcoTile, 4)
+	// read pixi data
+	pixiImg, err := pixi.ReadPixi(file)
 	if err != nil {
 		fmt.Println("Failed to open pixi cache reader", err)
 		return
 	}
-	fmt.Println("converting...")
-	fmt.Println(readData.Summary)
 
 	// get all gebco geotiff files
 	files, err := os.ReadDir(*tiffsPath) //read the files from the directory
@@ -80,17 +70,21 @@ func main() {
 			fmt.Println(tile)
 		}
 	}
-	// sort the north to south, west to east
-	slices.SortFunc(tiles, func(t1 pixigebco.GebcoTile, t2 pixigebco.GebcoTile) int {
-		if t1.NorthStart.Degree == t2.NorthStart.Degree {
-			if t1.WestStart.Degree < t2.WestStart.Degree {
-				return -1
-			}
-			return 1
-		} else if t1.NorthStart.Degree < t2.NorthStart.Degree {
+
+	slices.SortFunc(tiles, func(t1, t2 pixigebco.GebcoTile) int {
+		if t1.NorthStart.Degree > t2.NorthStart.Degree {
+			return -1
+		}
+		if t1.NorthStart.Degree < t2.NorthStart.Degree {
 			return 1
 		}
-		return -1
+		if t1.WestStart.Degree < t2.WestStart.Degree {
+			return -1
+		}
+		if t1.WestStart.Degree > t2.WestStart.Degree {
+			return 1
+		}
+		return 0
 	})
 
 	for _, geotiff := range tiles {
@@ -100,6 +94,9 @@ func main() {
 			return
 		}
 
+		geoTileX := (geotiff.WestStart.Degree + 180) / 90
+		geoTileY := (-geotiff.NorthStart.Degree / 90) + 1
+		fmt.Printf("loading tile: %s, %s at %d, %d...\n", geotiff.NorthStart, geotiff.WestStart, geoTileX, geoTileY)
 		tags, header, err := gtiff.ReadTags(gFile)
 		if err != nil {
 			fmt.Println("failed to read geotiff tags:", err)
@@ -110,24 +107,45 @@ func main() {
 			fmt.Println("failed to read geotiff data:", err)
 			return
 		}
-		fmt.Printf("loaded tile: %s, %s with size: %d\n", geotiff.NorthStart, geotiff.WestStart, len(data))
 
-		geoTileX := (geotiff.WestStart.Degree + 180) / 90
-		geoTileY := (-geotiff.NorthStart.Degree / 90) + 1
-		for x := 0; x < int(tags.ImageWidth); x++ {
-			for y := 0; y < int(tags.ImageLength); y++ {
-				px := geoTileX*21600 + x
-				py := geoTileY*21600 + y
-				pVal, err := readData.GetSampleField([]uint{uint(px), uint(py)}, 0)
-				if err != nil {
-					fmt.Println("failed to read pixi pixel:", px, py, err)
+		fmt.Printf("loaded tile: %s, %s at %d, %d with size: %d\n", geotiff.NorthStart, geotiff.WestStart, geoTileX, geoTileY, len(data))
+		activeTiles := map[int][]byte{}
+		for y := 0; y < int(tags.ImageLength); y++ {
+			py := geoTileY*pixigebco.GtiffTileHeight + y
+			tileY := py / pixiImg.Layers[0].Dimensions[1].TileSize
+			inTileY := py % pixiImg.Layers[0].Dimensions[1].TileSize
+			for x := 0; x < int(tags.ImageWidth); x++ {
+				px := geoTileX*pixigebco.GtiffTileWidth + x
+				tileX := px / pixiImg.Layers[0].Dimensions[0].TileSize
+				tileInd := tileY*pixiImg.Layers[0].Dimensions[0].Tiles() + tileX
+				if _, ok := activeTiles[tileInd]; !ok {
+					if len(activeTiles) >= 40 {
+						minInd := slices.Min(slices.Collect(maps.Keys(activeTiles)))
+						delete(activeTiles, minInd)
+					}
+					tileData := make([]byte, pixiImg.Layers[0].DiskTileSize(tileInd))
+					err := pixiImg.Layers[0].ReadTile(file, pixiImg.Header, tileInd, tileData)
+					if err != nil {
+						fmt.Println("failed to read tile", tileInd, err)
+						return
+					}
+					activeTiles[tileInd] = tileData
+				}
+				tileData := activeTiles[tileInd]
+				inTileX := px % pixiImg.Layers[0].Dimensions[0].TileSize
+				inTileInd := inTileY*pixiImg.Layers[0].Dimensions[0].TileSize + inTileX
+				inTileOffset := inTileInd * pixiImg.Layers[0].SampleSize()
+				pVal := pixiImg.Layers[0].Fields[0].BytesToValue(tileData[inTileOffset:], pixiImg.Header.ByteOrder)
+				if pVal != int16(data[y*int(tags.ImageWidth)+x]) {
+					fmt.Printf("expected value %d at (%d,%d), but got %d at (%d, %d)\n", int16(data[y*int(tags.ImageWidth)+x]), x, y, pVal, px, py)
 					return
 				}
-				if pVal != int16(data[y*int(tags.ImageWidth)+x]) {
-					fmt.Printf("expected value %d at (%d,%d), but got %d\n", int16(data[y*int(tags.ImageWidth)+x]), px, py, pVal)
-					return
+				if x%2160 == 0 && y%2160 == 0 {
+					fmt.Println("x", x, "y", y)
 				}
 			}
 		}
 	}
+
+	fmt.Println("all verified!")
 }

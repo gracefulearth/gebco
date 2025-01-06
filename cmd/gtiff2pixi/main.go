@@ -15,6 +15,9 @@ import (
 	"github.com/rngoodner/gtiff"
 )
 
+// This application converts a folder of GeoTiff files, each containing an array of uint16 elevation pixels,
+// into a set of tiled Pixi images in the same projection.
+
 func main() {
 	imgDir := flag.String("dir", "./", "Path to GEBCO GeoTIFF input files, and where the resulting Pixi files will be saved")
 	flag.Parse()
@@ -92,11 +95,11 @@ func convertGebcoGtiffToPixi(path string, year int, north int, south int, west i
 				pixi.DimensionSet{
 					{Name: "longitude", Size: pixigebco.GtiffTileWidth, TileSize: pixigebco.GtiffTileWidth / 10},
 					{Name: "latitude", Size: pixigebco.GtiffTileHeight, TileSize: pixigebco.GtiffTileHeight / 10}},
-				[]pixi.Field{{Name: "elevation", Type: pixi.FieldUint16}}),
+				[]pixi.Field{{Name: "elevation", Type: pixi.FieldInt16}}),
 			IterFn: func(layer *pixi.Layer, coord pixi.SampleCoordinate) ([]any, map[string]any) {
 				x := coord[0]
 				y := coord[1]
-				return []any{gData[x*pixigebco.GtiffTileWidth+y]}, nil
+				return []any{int16(gData[y*pixigebco.GtiffTileWidth+x])}, nil
 			},
 		})
 
