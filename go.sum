@@ -1,10 +1,4 @@
-github.com/owlpinetech/flatsphere v0.1.1 h1:R7QmdUFDfxsgzuAE+sWAKFhFF4s0fxaS7iWpD4DYL50=
-github.com/owlpinetech/flatsphere v0.1.1/go.mod h1:gzHspWe/s3AuFniLlVB0WJEAkplcaKKbfej2/nG80tw=
-github.com/owlpinetech/healpix v0.1.3 h1:mF/WxkONpHwsuFq/WwuemtMoHPgW/ou46eoVXbeNh+c=
-github.com/owlpinetech/healpix v0.1.3/go.mod h1:WxjRe/70N47ZYHTAxHmyqOT1rnL0NTiyvsjZKzERulE=
 github.com/owlpinetech/pixi v0.0.16 h1:72Cthfem5k0BOnfrllLFgUzaknp2+5huACadOUGssZg=
 github.com/owlpinetech/pixi v0.0.16/go.mod h1:xobGuGnB3roJqjLF+cNiVgiIOOHzZGYM4tyXVqH02P4=
 github.com/rngoodner/gtiff v0.2.1 h1:9lui38EcANf8BOWS3VSvEBwThHePD5mlZXr5zAZKELc=
 github.com/rngoodner/gtiff v0.2.1/go.mod h1:ripAFC4AqsD0WRCvlOVavAGdmg259A/fvOK8lwVF3q0=
-golang.org/x/exp v0.0.0-20250103183323-7d7fa50e5329 h1:9kj3STMvgqy3YA4VQXBrN7925ICMxD5wzMRcgA30588=
-golang.org/x/exp v0.0.0-20250103183323-7d7fa50e5329/go.mod h1:qj5a5QZpwLU2NLQudwIN5koi3beDhSAlJwa67PuM98c=

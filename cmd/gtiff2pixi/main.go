@@ -23,12 +23,13 @@ func main() {
 	flag.Parse()
 
 	// get all gebco geotiff files
-	files, err := os.ReadDir(*imgDir) //read the files from the directory
+	files, err := os.ReadDir(*imgDir)
 	if err != nil {
 		fmt.Println("error reading directory:", err)
 		return
 	}
 
+	// convert each file simultaneously
 	var waitGroup sync.WaitGroup
 	for _, file := range files {
 		if strings.HasSuffix(file.Name(), ".tif") {
