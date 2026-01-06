@@ -9,10 +9,10 @@ import (
 	"path"
 	"sync"
 
+	"github.com/gracefulearth/gebco"
 	"github.com/gracefulearth/go-colorext"
 	"github.com/gracefulearth/gopixi"
 	"github.com/gracefulearth/image/tiff"
-	"github.com/owlpinetech/gebco"
 )
 
 type gebcoLayerTile struct {

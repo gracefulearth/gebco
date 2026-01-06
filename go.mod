@@ -1,4 +1,4 @@
-module github.com/owlpinetech/gebco
+module github.com/gracefulearth/gebco
 
 go 1.25.4
 
