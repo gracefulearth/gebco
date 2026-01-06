@@ -3,149 +3,188 @@ package main
 import (
 	"flag"
 	"fmt"
-	"maps"
+	"image"
+	"image/color"
 	"os"
-	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
+	"path"
+	"sync"
 
-	"github.com/owlpinetech/pixi"
-	pixigebco "github.com/owlpinetech/pixi_gebco"
-	"github.com/rngoodner/gtiff"
+	"github.com/gracefulearth/go-colorext"
+	"github.com/gracefulearth/gopixi"
+	"github.com/gracefulearth/image/tiff"
+	"github.com/owlpinetech/gebco"
 )
 
+type gebcoLayerTile struct {
+	ice    gebco.GebcoTifFile
+	subIce gebco.GebcoTifFile
+	tid    gebco.GebcoTifFile
+}
+
 func main() {
-	tiffsPath := flag.String("geotiff", "./", "Input path to GEBCO GeoTIFF files")
-	pixiPath := flag.String("pixi", "", "Output path to save the Pixi dataset")
+	pixiSrcArg := flag.String("pixiSrc", "", "Path to source Pixi file to verify")
+	gebcoSrcArg := flag.String("gebcoSrc", "", "Path to source GEBCO Geotiff files")
+	yearArg := flag.Int("year", 2025, "the GEBCO year to verify against")
 	flag.Parse()
 
-	if *pixiPath == "" {
-		fmt.Println("Must specify a path to the Pixi GEBCO file")
+	if *pixiSrcArg == "" || *gebcoSrcArg == "" {
+		flag.Usage()
 		return
 	}
 
-	file, err := os.Open(*pixiPath)
+	// get GEBCO files
+	plusIceFiles := gebco.GebcoTiles(*yearArg, gebco.GebcoDataIce)
+	subIceFiles := gebco.GebcoTiles(*yearArg, gebco.GebcoDataSubIce)
+	tidFiles := gebco.GebcoTiles(*yearArg, gebco.GebcoDataTypeId)
+	allGebcoFiles := make([]gebcoLayerTile, len(plusIceFiles))
+	for i := range plusIceFiles {
+		// relying on consistent ordering of GebcoTiles function here
+		allGebcoFiles[i] = gebcoLayerTile{
+			ice:    plusIceFiles[i],
+			subIce: subIceFiles[i],
+			tid:    tidFiles[i],
+		}
+	}
+
+	files, err := os.ReadDir(*gebcoSrcArg)
 	if err != nil {
-		fmt.Println("Could not open pixi file:", err)
+		fmt.Printf("failed to read source directory: %v\n", err)
 		return
+	}
+
+	for _, gebcoFile := range allGebcoFiles {
+		foundIce := false
+		foundSubIce := false
+		foundTid := false
+		for _, file := range files {
+			if file.Name() == gebcoFile.ice.FileName() {
+				foundIce = true
+			}
+			if file.Name() == gebcoFile.subIce.FileName() {
+				foundSubIce = true
+			}
+			if file.Name() == gebcoFile.tid.FileName() {
+				foundTid = true
+			}
+		}
+		if !foundIce {
+			fmt.Printf("missing GEBCO file: %s\n", gebcoFile.ice.FileName())
+			return
+		}
+		if !foundSubIce {
+			fmt.Printf("missing GEBCO file: %s\n", gebcoFile.subIce.FileName())
+			return
+		}
+		if !foundTid {
+			fmt.Printf("missing GEBCO file: %s\n", gebcoFile.tid.FileName())
+			return
+		}
+	}
+
+	// open Pixi file to compare against
+	readFile, err := os.Open(*pixiSrcArg)
+	if err != nil {
+		fmt.Printf("failed to open Pixi file for reading: %v\n", err)
+		return
+	}
+
+	summary, err := gopixi.ReadPixi(readFile)
+	if err != nil {
+		fmt.Printf("failed to read Pixi file header: %v\n", err)
+		return
+	}
+	gebcoLayer := summary.Layers[0]
+	if gebcoLayer.Name != "gebco" {
+		fmt.Printf("expected first layer to be 'gebco', got '%s'\n", gebcoLayer.Name)
+		return
+	}
+
+	readCache := gopixi.NewFifoCacheReadLayer(readFile, summary.Header, gebcoLayer, 8)
+
+	// iterate over GEBCO tiles and compare against Pixi data
+	for gebcoTileIndex, gebcoTile := range allGebcoFiles {
+		iceTile, subIceTile, tidTile, err := loadGebcoTileLayer(*gebcoSrcArg, gebcoTile)
+		if err != nil {
+			fmt.Printf("failed to load GEBCO tile layer: %v\n", err)
+			return
+		}
+
+		for gebcoTilePixelIndex := range gebco.GtiffSize {
+			// calculate x,y of pixel within GEBCO tile
+			xInGebcoTile := gebcoTilePixelIndex % gebco.GtiffTileSize
+			yInGebcoTile := gebcoTilePixelIndex / gebco.GtiffTileSize
+
+			// calculate global x,y of pixel within full GEBCO dataset
+			xGlobal := xInGebcoTile + (gebcoTileIndex%gebco.TilesX)*gebco.GtiffTileSize
+			yGlobal := yInGebcoTile + (gebcoTileIndex/gebco.TilesX)*gebco.GtiffTileSize
+
+			// get the pixi sample at this coord
+			sample, err := gopixi.SampleAt(readCache, []int{xGlobal, yGlobal})
+			if err != nil {
+				fmt.Printf("failed to get Pixi sample at (%d,%d): %v\n", xGlobal, yGlobal, err)
+				return
+			}
+
+			// get GEBCO pixel values
+			gebcoIce := iceTile.At(xInGebcoTile, yInGebcoTile).(colorext.GrayS16).Y
+			gebcoSubIce := subIceTile.At(xInGebcoTile, yInGebcoTile).(colorext.GrayS16).Y
+			gebcoTid := tidTile.At(xInGebcoTile, yInGebcoTile).(color.Gray).Y
+
+			// compare
+			if sample[0] != gebcoIce {
+				fmt.Printf("mismatch at (%d,%d) for ice: Pixi=%d GEBCO=%d\n", xGlobal, yGlobal, sample[0], gebcoIce)
+				return
+			}
+			if sample[1] != gebcoSubIce {
+				fmt.Printf("mismatch at (%d,%d) for sub-ice: Pixi=%d GEBCO=%d\n", xGlobal, yGlobal, sample[1], gebcoSubIce)
+				return
+			}
+			if sample[2] != gebcoTid {
+				fmt.Printf("mismatch at (%d,%d) for type ID: Pixi=%d GEBCO=%d\n", xGlobal, yGlobal, sample[2], gebcoTid)
+				return
+			}
+		}
+	}
+}
+
+func loadGebcoTileLayer(folder string, layer gebcoLayerTile) (ice, subIce, tid image.Image, err error) {
+	var iceErr, subIceErr, tidErr error
+
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
+		ice, iceErr = loadGebcoTile(path.Join(folder, layer.ice.FileName()))
+	})
+	wg.Go(func() {
+		subIce, subIceErr = loadGebcoTile(path.Join(folder, layer.subIce.FileName()))
+	})
+	wg.Go(func() {
+		tid, tidErr = loadGebcoTile(path.Join(folder, layer.tid.FileName()))
+	})
+	wg.Wait()
+
+	if iceErr != nil {
+		return nil, nil, nil, iceErr
+	}
+	if subIceErr != nil {
+		return nil, nil, nil, subIceErr
+	}
+	if tidErr != nil {
+		return nil, nil, nil, tidErr
+	}
+	return ice, subIce, tid, nil
+}
+
+func loadGebcoTile(path string) (image.Image, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open GEBCO file %s: %w", path, err)
 	}
 	defer file.Close()
 
-	// read pixi data
-	pixiImg, err := pixi.ReadPixi(file)
+	img, err := tiff.Decode(file)
 	if err != nil {
-		fmt.Println("Failed to open pixi cache reader", err)
-		return
+		return nil, fmt.Errorf("failed to decode GEBCO file %s: %w", path, err)
 	}
 
-	// get all gebco geotiff files
-	files, err := os.ReadDir(*tiffsPath) //read the files from the directory
-	if err != nil {
-		fmt.Println("error reading directory:", err) //print error if directory is not read properly
-		return
-	}
-
-	tiles := []pixigebco.GebcoTile{}
-	for _, file := range files {
-		if strings.HasSuffix(file.Name(), ".tif") {
-			fname, _ := strings.CutSuffix(file.Name(), ".tif")
-			split := strings.Split(fname, "_")
-			northDeg, err := strconv.ParseInt(strings.Split(split[4][1:], ".")[0], 0, 0)
-			if err != nil {
-				fmt.Println("failed to extract north from gebco file name:", err)
-				return
-			}
-			westDeg, err := strconv.ParseInt(strings.Split(split[6][1:], ".")[0], 0, 0)
-			if err != nil {
-				fmt.Println("failed to extract west from gebco file name:", err)
-				return
-			}
-			tile := pixigebco.GebcoTile{
-				FileName:   file.Name(),
-				NorthStart: pixigebco.GebcoArc{Degree: int(northDeg)},
-				WestStart:  pixigebco.GebcoArc{Degree: int(westDeg)},
-			}
-			tiles = append(tiles, tile)
-			fmt.Println(tile)
-		}
-	}
-
-	slices.SortFunc(tiles, func(t1, t2 pixigebco.GebcoTile) int {
-		if t1.NorthStart.Degree > t2.NorthStart.Degree {
-			return -1
-		}
-		if t1.NorthStart.Degree < t2.NorthStart.Degree {
-			return 1
-		}
-		if t1.WestStart.Degree < t2.WestStart.Degree {
-			return -1
-		}
-		if t1.WestStart.Degree > t2.WestStart.Degree {
-			return 1
-		}
-		return 0
-	})
-
-	for _, geotiff := range tiles {
-		gFile, err := os.Open(filepath.Join(*tiffsPath, geotiff.FileName))
-		if err != nil {
-			fmt.Println("failed to open geotiff file:", err)
-			return
-		}
-
-		geoTileX := (geotiff.WestStart.Degree + 180) / 90
-		geoTileY := (-geotiff.NorthStart.Degree / 90) + 1
-		fmt.Printf("loading tile: %s, %s at %d, %d...\n", geotiff.NorthStart, geotiff.WestStart, geoTileX, geoTileY)
-		tags, header, err := gtiff.ReadTags(gFile)
-		if err != nil {
-			fmt.Println("failed to read geotiff tags:", err)
-			return
-		}
-		data, err := gtiff.ReadData16(gFile, header, tags)
-		if err != nil {
-			fmt.Println("failed to read geotiff data:", err)
-			return
-		}
-
-		fmt.Printf("loaded tile: %s, %s at %d, %d with size: %d\n", geotiff.NorthStart, geotiff.WestStart, geoTileX, geoTileY, len(data))
-		activeTiles := map[int][]byte{}
-		for y := 0; y < int(tags.ImageLength); y++ {
-			py := geoTileY*pixigebco.GtiffTileHeight + y
-			tileY := py / pixiImg.Layers[0].Dimensions[1].TileSize
-			inTileY := py % pixiImg.Layers[0].Dimensions[1].TileSize
-			for x := 0; x < int(tags.ImageWidth); x++ {
-				px := geoTileX*pixigebco.GtiffTileWidth + x
-				tileX := px / pixiImg.Layers[0].Dimensions[0].TileSize
-				tileInd := tileY*pixiImg.Layers[0].Dimensions[0].Tiles() + tileX
-				if _, ok := activeTiles[tileInd]; !ok {
-					if len(activeTiles) >= 40 {
-						minInd := slices.Min(slices.Collect(maps.Keys(activeTiles)))
-						delete(activeTiles, minInd)
-					}
-					tileData := make([]byte, pixiImg.Layers[0].DiskTileSize(tileInd))
-					err := pixiImg.Layers[0].ReadTile(file, pixiImg.Header, tileInd, tileData)
-					if err != nil {
-						fmt.Println("failed to read tile", tileInd, err)
-						return
-					}
-					activeTiles[tileInd] = tileData
-				}
-				tileData := activeTiles[tileInd]
-				inTileX := px % pixiImg.Layers[0].Dimensions[0].TileSize
-				inTileInd := inTileY*pixiImg.Layers[0].Dimensions[0].TileSize + inTileX
-				inTileOffset := inTileInd * pixiImg.Layers[0].SampleSize()
-				pVal := pixiImg.Layers[0].Fields[0].BytesToValue(tileData[inTileOffset:], pixiImg.Header.ByteOrder)
-				if pVal != int16(data[y*int(tags.ImageWidth)+x]) {
-					fmt.Printf("expected value %d at (%d,%d), but got %d at (%d, %d)\n", int16(data[y*int(tags.ImageWidth)+x]), x, y, pVal, px, py)
-					return
-				}
-				if x%2160 == 0 && y%2160 == 0 {
-					fmt.Println("x", x, "y", y)
-				}
-			}
-		}
-	}
-
-	fmt.Println("all verified!")
+	return img, nil
 }

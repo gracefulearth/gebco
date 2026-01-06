@@ -1,70 +1,151 @@
-package pixigebco
+package gebco
 
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 )
 
 const (
-	ArcSecIncrement int = 15 // The number of arc seconds each pixel is spaced apart from each neighboring pixel
+	GtiffTileSize int = 21600                         // The number of pixels across a strip of longitude/latitude in a single GEBCO tif tile.
+	GtiffSize     int = GtiffTileSize * GtiffTileSize // The total number of pixels in a single GEBCO tif tile.
 
-	GtiffTileWidth  int = 21600
-	GtiffTileHeight int = 21600
+	TilesY int = 2               // The number of tiles in the Y (latitude) direction in the GEBCO dataset.
+	TilesX int = 4               // The number of tiles in the X (longitude) direction in the GEBCO dataset.
+	Tiles  int = TilesX * TilesY // The total number of tif tiles in the GEBCO dataset.
 
-	TotalWidth  int = 4 * GtiffTileWidth       // The number of pixels across a strip of latitude in the GEBCO dataset. 86400 pixels.
-	TotalHeight int = 2 * GtiffTileHeight      // The number of pixels along a strip of longitude in the GEBCO dataset. 43200 pixels.
+	TotalWidth  int = TilesX * GtiffTileSize   // The number of pixels across a strip of latitude in the GEBCO dataset.
+	TotalHeight int = TilesY * GtiffTileSize   // The number of pixels along a strip of longitude in the GEBCO dataset.
 	TotalPixels     = TotalWidth * TotalHeight // The total number of pixels in the GEBCO dataset.
 
-	PixelsPerMinute = 60 / ArcSecIncrement
-	PixelsPerDegree = 60 * PixelsPerMinute
+	ArcSecIncrement int = 15                   // The number of arc seconds each pixel is spaced apart from each neighboring pixel
+	PixelsPerMinute     = 60 / ArcSecIncrement // The number of GEBCO pixels in a single arc minute.
+	PixelsPerDegree     = 60 * PixelsPerMinute // The number of GEBCO pixels in a single degree.
 )
 
-func SplitGebcoFileName(fileName string) (year int, north int, south int, west int, east int, err error) {
-	// split by underscore
-	split := strings.Split(fileName, "_")
-	for ind, subStr := range split {
-		// year will be the next one!
-		if subStr == "gebco" {
-			maybeYear, err := strconv.ParseInt(split[ind+1], 0, 0)
-			if err == nil {
-				year = int(maybeYear)
-			}
-		}
+type GebcoDataType byte
 
-		// otherwise, look for degrees
-		if strings.HasPrefix(subStr, "n") {
-			northMaybe, err := parseDegreeInt(subStr)
-			if err == nil {
-				north = northMaybe
-			}
-		}
-		if strings.HasPrefix(subStr, "s") {
-			southMaybe, err := parseDegreeInt(subStr)
-			if err == nil {
-				south = southMaybe
-			}
-		}
-		if strings.HasPrefix(subStr, "e") {
-			eastMaybe, err := parseDegreeInt(subStr)
-			if err == nil {
-				east = eastMaybe
-			}
-		}
-		if strings.HasPrefix(subStr, "w") {
-			westMaybe, err := parseDegreeInt(subStr)
-			if err == nil {
-				west = westMaybe
-			}
-		}
+const (
+	GebcoDataIce    GebcoDataType = iota // Bathymetric data including surface ice cover (e.g., ice shelves, grounded ice, sea ice).
+	GebcoDataSubIce                      // Bathymetric data representing the seafloor beneath ice cover, excluding surface ice features.
+	GebcoDataTypeId                      // Source type of a GEBCO depth value.
+)
+
+// fileString returns the string representation of the GebcoDataType for use in file names.
+func (g GebcoDataType) fileString() string {
+	switch g {
+	case GebcoDataIce:
+		return ""
+	case GebcoDataSubIce:
+		return "_sub_ice"
+	case GebcoDataTypeId:
+		return "_tid"
+	default:
+		panic("unknown GebcoDataType")
 	}
-	return
 }
 
-func parseDegreeInt(str string) (int, error) {
-	res, err := strconv.ParseInt(strings.Split(str[1:], ".")[0], 10, 64)
-	return int(res), err
+// GebcoTypeId represents the source type of a GEBCO depth value.
+type GebcoTypeId byte
+
+const (
+	GebcoTypeLand GebcoTypeId = 0 // Value represents land area (no depth) from SRTM15+ V2.7 dataset.
+
+	// Direct Measurements
+
+	GebcoTypeSingleBeam  GebcoTypeId = 10 // Depth value collected by a single-beam echo sounder.
+	GebcoTypeMultiBeam   GebcoTypeId = 11 // Depth value collected by a multi-beam echo sounder.
+	GebcoTypeSeismic     GebcoTypeId = 12 // Depth value collected by seismic methods.
+	GebcoTypeIsolated    GebcoTypeId = 13 // Depth value collected by isolated soundings, not part of a systematic survey or track.
+	GebcoTypeEncSounding GebcoTypeId = 14 // Depth value extracted from an Electronic Navigation Chart.
+	GebcoTypeLidar       GebcoTypeId = 15 // Depth value derived from bathymetric LIDAR sensor.
+	GebcoTypeOptical     GebcoTypeId = 16 // Depth value derived from optical light sensor.
+	GebcoTypeCombination GebcoTypeId = 17 // Depth value derived from a combination of direct measurement methods.
+
+	// Indirect Measurements
+
+	GebcoTypeSatelliteGravity            GebcoTypeId = 40 // Depth value dervied from interpolated data guided by satellite-derived gravity measurements.
+	GebcoTypeInterpolated                GebcoTypeId = 41 // Depth value derived from interpolation using a computer algorithm.
+	GebcoTypeContour                     GebcoTypeId = 42 // Depth value derived from digitized contour lines.
+	GebcoTypeEncContour                  GebcoTypeId = 43 // Depth value derived from contour lines extracted from an Electronic Navigation Chart.
+	GebcoTypeMultisourceSatelliteGravity GebcoTypeId = 44 // Depth value derived from multisource data guided by satellite-derived gravity measurements.
+	GebcoTypeFlightGravity               GebcoTypeId = 45 // Depth value derived from multisource data guided by airborne gravity measurements.
+	GebcoTypeIcebergDraft                GebcoTypeId = 46 // Depth value derived from grounded iceberg draft measurements, using satellite-dervied freeboard measurements.
+	GebcoTypeArgoDrift                   GebcoTypeId = 47 // Depth value derived from Argo float drift measurements.
+
+	// Unknown
+
+	GebcoTypePregenerated GebcoTypeId = 70 // Depth value from pregenerated bathymetry grid data source derived from mixed sources.
+	GebcoTypeUnknown      GebcoTypeId = 71 // Depth value from unknown data source.
+	GebcoTypeSteering     GebcoTypeId = 72 // Depth value used to constrain the grid in areas of poor data coverage.
+)
+
+type GebcoTifFile struct {
+	x, y int
+	year int
+	data GebcoDataType
+}
+
+func (g GebcoTifFile) String() string {
+	return fmt.Sprintf("GEBCO(%d%s,n%d,s%d,w%d,e%d)", g.year, g.data.fileString(), g.North(), g.South(), g.West(), g.East())
+}
+
+func (g GebcoTifFile) North() int {
+	return 90 - g.y*90
+}
+
+func (g GebcoTifFile) South() int {
+	return g.North() - 90
+}
+
+func (g GebcoTifFile) West() int {
+	return -180 + g.x*90
+}
+
+func (g GebcoTifFile) East() int {
+	return g.West() + 90
+}
+
+func (g GebcoTifFile) FileName() string {
+	return fmt.Sprintf("gebco_%d%s_n%d.0_s%d.0_w%d.0_e%d.0.tif", g.year, g.data.fileString(), g.North(), g.South(), g.West(), g.East())
+}
+
+func (g *GebcoTifFile) UnmarshalText(text []byte) error {
+	strText := string(text)
+
+	// determine data type
+	if strings.Contains(strText, "_sub_ice") {
+		g.data = GebcoDataSubIce
+		strText = strings.ReplaceAll(strText, "_sub_ice", "")
+	} else if strings.Contains(strText, "_tid") {
+		g.data = GebcoDataTypeId
+		strText = strings.ReplaceAll(strText, "_tid", "")
+	} else {
+		g.data = GebcoDataIce
+	}
+
+	var year, north, south, west, east int
+	fmt.Sscanf(strText, "gebco_%d_n%d.0_s%d.0_w%d.0_e%d.0.tif", &year, &north, &south, &west, &east)
+	g.year = year
+	g.x = (west + 180) / 90
+	g.y = (90 - north) / 90
+
+	return nil
+}
+
+func GebcoTiles(year int, dataType GebcoDataType) []GebcoTifFile {
+	tiles := make([]GebcoTifFile, 0, TilesX*TilesY)
+	for y := range TilesY {
+		for x := range TilesX {
+			tiles = append(tiles, GebcoTifFile{
+				x:    x,
+				y:    y,
+				year: year,
+				data: dataType,
+			})
+		}
+	}
+	return tiles
 }
 
 type GebcoArc struct {
@@ -100,221 +181,3 @@ func (g GebcoArc) ToDecimal() float64 {
 func (a GebcoArc) Equal(b GebcoArc) bool {
 	return a.Degree == b.Degree && a.Minute == b.Minute && a.Second == b.Second
 }
-
-type GebcoTile struct {
-	FileName   string
-	NorthStart GebcoArc
-	WestStart  GebcoArc
-}
-
-func (g GebcoTile) String() string {
-	return fmt.Sprintf("gebco_tile_north(%s)_west(%s) - %s", g.NorthStart, g.WestStart, g.FileName)
-}
-
-/*type GebcoPixiCache struct {
-	*pixi.CacheDataset
-}
-
-func (g *GebcoPixiCache) GetValue(x, y int) topography.CriticalPointKind {
-	val, err := g.GetSampleField([]uint{uint(x), uint(y)}, 0)
-	if err != nil {
-		panic(err)
-	}
-	return topography.CriticalPointKind(val.(uint8))
-}
-
-func (g *GebcoPixiCache) SetValue(x, y int, val topography.CriticalPointKind) {
-	err := g.SetSampleField([]uint{uint(x), uint(y)}, 0, uint8(val))
-	if err != nil {
-		panic(err)
-	}
-}
-
-func (r *GebcoPixiCache) WalkGet(rowMajor bool, visitor func(x int, y int, val topography.CriticalPointKind) bool) {
-	if rowMajor {
-		for y := 0; y < int(r.Dimensions[1].Size); y++ {
-			for x := 0; x < int(r.Dimensions[0].Size); x++ {
-				val, err := r.GetSampleField([]uint{uint(x), uint(y)}, 0)
-				if err != nil {
-					panic(err)
-				}
-				if !visitor(x, y, topography.CriticalPointKind(val.(uint8))) {
-					return
-				}
-			}
-		}
-	} else {
-		for x := 0; x < int(r.Dimensions[0].Size); x++ {
-			for y := 0; y < int(r.Dimensions[1].Size); y++ {
-				val, err := r.GetSampleField([]uint{uint(x), uint(y)}, 0)
-				if err != nil {
-					panic(err)
-				}
-				if !visitor(x, y, topography.CriticalPointKind(val.(uint8))) {
-					return
-				}
-			}
-		}
-	}
-}
-
-func (r *GebcoPixiCache) WalkSet(rowMajor bool, visitor func(x int, y int, val topography.CriticalPointKind) (topography.CriticalPointKind, bool)) {
-	if rowMajor {
-		for y := 0; y < int(r.Dimensions[1].Size); y++ {
-			for x := 0; x < int(r.Dimensions[0].Size); x++ {
-				val, err := r.GetSampleField([]uint{uint(x), uint(y)}, 0)
-				if err != nil {
-					panic(err)
-				}
-				newVal, cont := visitor(x, y, topography.CriticalPointKind(val.(uint8)))
-				err = r.SetSampleField([]uint{uint(x), uint(y)}, 0, uint8(newVal))
-				if err != nil {
-					panic(err)
-				}
-				if !cont {
-					return
-				}
-			}
-		}
-	} else {
-		for x := 0; x < int(r.Dimensions[0].Size); x++ {
-			for y := 0; y < int(r.Dimensions[1].Size); y++ {
-				val, err := r.GetSampleField([]uint{uint(x), uint(y)}, 0)
-				if err != nil {
-					panic(err)
-				}
-				newVal, cont := visitor(x, y, topography.CriticalPointKind(val.(uint8)))
-				err = r.SetSampleField([]uint{uint(x), uint(y)}, 0, uint8(newVal))
-				if err != nil {
-					panic(err)
-				}
-				if !cont {
-					return
-				}
-			}
-		}
-	}
-}
-
-func (r *GebcoPixiCache) WalkNeighbors(x int, y int, n topography.Neighborhood, visitor func(x int, y int, val topography.CriticalPointKind)) {
-	n.WalkNeighbors(x, y, func(xN, yN int) {
-		if xN >= 0 && xN < int(r.Dimensions[0].Size) && yN >= 0 && yN < int(r.Dimensions[1].Size) {
-			val, err := r.GetSampleField([]uint{uint(xN), uint(yN)}, 0)
-			if err != nil {
-				panic(err)
-			}
-			visitor(xN, yN, topography.CriticalPointKind(val.(uint8)))
-		}
-	})
-}
-
-type GebcoPixiAppend struct {
-	*pixi.AppendDataset
-}
-
-func (g *GebcoPixiAppend) GetValue(x, y int) int16 {
-	val, err := g.GetSampleField([]uint{uint(x), uint(y)}, 0)
-	if err != nil {
-		panic(err)
-	}
-	return val.(int16)
-}
-
-func (g *GebcoPixiAppend) SetValue(x, y int, val int16) {
-	err := g.SetSampleField([]uint{uint(x), uint(y)}, 0, val)
-	if err != nil {
-		panic(err)
-	}
-}
-
-func (r *GebcoPixiAppend) WalkGet(rowMajor bool, visitor func(x int, y int, val int16) bool) {
-	if rowMajor {
-		for y := 0; y < int(r.Dimensions[1].Size); y++ {
-			for x := 0; x < int(r.Dimensions[0].Size); x++ {
-				val, err := r.GetSampleField([]uint{uint(x), uint(y)}, 0)
-				if err != nil {
-					panic(err)
-				}
-				if !visitor(x, y, val.(int16)) {
-					return
-				}
-			}
-		}
-	} else {
-		for x := 0; x < int(r.Dimensions[0].Size); x++ {
-			for y := 0; y < int(r.Dimensions[1].Size); y++ {
-				val, err := r.GetSampleField([]uint{uint(x), uint(y)}, 0)
-				if err != nil {
-					panic(err)
-				}
-				if !visitor(x, y, val.(int16)) {
-					return
-				}
-			}
-		}
-	}
-}
-
-func (r *GebcoPixiAppend) WalkSet(rowMajor bool, visitor func(x int, y int, val int16) (int16, bool)) {
-	if rowMajor {
-		for y := 0; y < int(r.Dimensions[1].Size); y++ {
-			for x := 0; x < int(r.Dimensions[0].Size); x++ {
-				val, err := r.GetSampleField([]uint{uint(x), uint(y)}, 0)
-				if err != nil {
-					panic(err)
-				}
-				newVal, cont := visitor(x, y, val.(int16))
-				err = r.SetSampleField([]uint{uint(x), uint(y)}, 0, newVal)
-				if err != nil {
-					panic(err)
-				}
-				if !cont {
-					return
-				}
-			}
-		}
-	} else {
-		for x := 0; x < int(r.Dimensions[0].Size); x++ {
-			for y := 0; y < int(r.Dimensions[1].Size); y++ {
-				val, err := r.GetSampleField([]uint{uint(x), uint(y)}, 0)
-				if err != nil {
-					panic(err)
-				}
-				newVal, cont := visitor(x, y, val.(int16))
-				err = r.SetSampleField([]uint{uint(x), uint(y)}, 0, newVal)
-				if err != nil {
-					panic(err)
-				}
-				if !cont {
-					return
-				}
-			}
-		}
-	}
-}
-
-func (r *GebcoPixiAppend) WalkNeighbors(x int, y int, n topography.Neighborhood, visitor func(x int, y int, val int16)) {
-	n.WalkNeighbors(x, y, func(xN, yN int) {
-		// wrap around half the earth for the north pole/south pole
-		if yN < 0 {
-			xN += int(r.Dimensions[0].Size/2) % int(r.Dimensions[0].Size)
-			yN = 0
-		} else if yN >= int(r.Dimensions[1].Size) {
-			xN += int(r.Dimensions[0].Size/2) % int(r.Dimensions[0].Size)
-			yN = int(r.Dimensions[1].Size) - 1
-		}
-
-		// wrap around the globe for the meridians
-		if xN < 0 {
-			xN = int(r.Dimensions[0].Size) - 1
-		} else if x >= int(r.Dimensions[0].Size) {
-			xN = 0
-		}
-		val, err := r.GetSampleField([]uint{uint(xN), uint(yN)}, 0)
-		if err != nil {
-			panic(err)
-		}
-		visitor(xN, yN, val.(int16))
-	})
-}
-*/

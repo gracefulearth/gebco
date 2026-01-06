@@ -1,40 +1,59 @@
-package pixigebco
+package gebco
 
 import "testing"
 
-func TestSplitGebcoName(t *testing.T) {
+func TestGebcoTifFileUnmarshal(t *testing.T) {
 	cases := []struct {
-		name        string
-		expectYear  int
-		expectNorth int
-		expectSouth int
-		expectWest  int
-		expectEast  int
+		name     string
+		expected GebcoTifFile
 	}{
-		{"gebco_2023_sub_ice_n0.0_s-90.0_w-90.0_e0.0.tif", 2023, 0, -90, -90, 0},
-		{"gebco_2023_sub_ice_n90.0_s0.0_w-180.0_e-90.0.tif", 2023, 90, 0, -180, -90},
+		{
+			"gebco_2023_sub_ice_n0.0_s-90.0_w-90.0_e0.0.tif",
+			GebcoTifFile{
+				year: 2023,
+				x:    1,
+				y:    1,
+				data: GebcoDataSubIce,
+			},
+		},
+		{
+			"gebco_2023_sub_ice_n90.0_s0.0_w-180.0_e-90.0.tif",
+			GebcoTifFile{
+				year: 2023,
+				x:    0,
+				y:    0,
+				data: GebcoDataSubIce,
+			},
+		},
+		{
+			"gebco_2022_n90.0_s0.0_w-180.0_e-90.0.tif",
+			GebcoTifFile{
+				year: 2022,
+				x:    0,
+				y:    0,
+				data: GebcoDataIce,
+			},
+		},
+		{
+			"gebco_2020_tid_n90.0_s0.0_w-180.0_e-90.0.tif",
+			GebcoTifFile{
+				year: 2020,
+				x:    0,
+				y:    0,
+				data: GebcoDataTypeId,
+			},
+		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			year, north, south, west, east, err := SplitGebcoFileName(c.name)
+			var gebcoFile GebcoTifFile
+			err := gebcoFile.UnmarshalText([]byte(c.name))
 			if err != nil {
 				t.Error(err)
 			} else {
-				if year != c.expectYear {
-					t.Errorf("expected year %d to be %d", year, c.expectYear)
-				}
-				if north != c.expectNorth {
-					t.Errorf("expect north %d to be %d", north, c.expectNorth)
-				}
-				if south != c.expectSouth {
-					t.Errorf("expect south %d to be %d", south, c.expectSouth)
-				}
-				if east != c.expectEast {
-					t.Errorf("expect east %d to be %d", east, c.expectEast)
-				}
-				if west != c.expectWest {
-					t.Errorf("expect west %d to be %d", west, c.expectWest)
+				if gebcoFile != c.expected {
+					t.Errorf("expected %+v to be %+v", gebcoFile, c.expected)
 				}
 			}
 		})
