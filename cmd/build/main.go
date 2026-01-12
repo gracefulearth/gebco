@@ -231,6 +231,7 @@ func main() {
 
 	overviewIterator := gopixi.NewTileOrderWriteIterator(pixiFile, summary.Header, overviewLayer)
 	overviewFactor := gebco.GtiffTileSize / *overviewSizeArg
+	sample := make(gopixi.Sample, 3)
 	err = summary.AppendIterativeLayer(pixiFile, overviewLayer, overviewIterator, func(dstIterator gopixi.IterativeLayerWriter) error {
 		for dstIterator.Next() {
 			coord := dstIterator.Coordinate()
@@ -247,7 +248,7 @@ func main() {
 
 			for y := yStart; y < yEnd; y++ {
 				for x := xStart; x < xEnd; x++ {
-					sample, err := gopixi.SampleAt(readCache, []int{x, y})
+					err := gopixi.SampleInto(readCache, []int{x, y}, sample)
 					if err != nil {
 						return fmt.Errorf("failed to read sample at coordinate %v: %w", []int{x, y}, err)
 					}

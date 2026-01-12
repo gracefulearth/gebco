@@ -4,7 +4,7 @@ go 1.25.4
 
 require (
 	github.com/gracefulearth/go-colorext v0.0.0-20251216211757-b64b7ec8ef8e
-	github.com/gracefulearth/gopixi v0.2.2
+	github.com/gracefulearth/gopixi v0.2.3
 	github.com/gracefulearth/image v0.0.0-20251216234636-b99e27345f8c
 )
 

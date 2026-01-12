@@ -101,7 +101,7 @@ func main() {
 	}
 
 	readCache := gopixi.NewFifoCacheReadLayer(readFile, summary.Header, gebcoLayer, 8)
-
+	sample := make(gopixi.Sample, 3)
 	// iterate over GEBCO tiles and compare against Pixi data
 	for gebcoTileIndex, gebcoTile := range allGebcoFiles {
 		iceTile, subIceTile, tidTile, err := loadGebcoTileLayer(*gebcoSrcArg, gebcoTile)
@@ -122,7 +122,7 @@ func main() {
 			yGlobal := yInGebcoTile + (gebcoTileIndex/gebco.TilesX)*gebco.GtiffTileSize
 
 			// get the pixi sample at this coord
-			sample, err := gopixi.SampleAt(readCache, []int{xGlobal, yGlobal})
+			err := gopixi.SampleInto(readCache, []int{xGlobal, yGlobal}, sample)
 			if err != nil {
 				fmt.Printf("failed to get Pixi sample at (%d,%d): %v\n", xGlobal, yGlobal, err)
 				return
@@ -148,7 +148,9 @@ func main() {
 				fmt.Printf("GEBCO tile %d/%d pixels verified: %d/%d\n", gebcoTileIndex+1, len(allGebcoFiles), gebcoTilePixelIndex+1, gebco.GtiffSize)
 			}
 		}
-		fmt.Printf("Verified GEBCO tile %d/%d in %v\n", gebcoTileIndex+1, len(allGebcoFiles), time.Since(startTime).Seconds())
+
+		totalTileTime := time.Since(startTime)
+		fmt.Printf("Verified GEBCO tile %d/%d in %v\n", gebcoTileIndex+1, len(allGebcoFiles), totalTileTime.Seconds())
 	}
 }
 
