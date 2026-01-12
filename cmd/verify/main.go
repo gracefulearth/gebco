@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"time"
 
 	"github.com/gracefulearth/gebco"
 	"github.com/gracefulearth/go-colorext"
@@ -108,7 +109,9 @@ func main() {
 			fmt.Printf("failed to load GEBCO tile layer: %v\n", err)
 			return
 		}
+		fmt.Printf("Verifying GEBCO tile %d/%d...\n", gebcoTileIndex+1, len(allGebcoFiles))
 
+		startTime := time.Now()
 		for gebcoTilePixelIndex := range gebco.GtiffSize {
 			// calculate x,y of pixel within GEBCO tile
 			xInGebcoTile := gebcoTilePixelIndex % gebco.GtiffTileSize
@@ -133,17 +136,19 @@ func main() {
 			// compare
 			if sample[0] != gebcoIce {
 				fmt.Printf("mismatch at (%d,%d) for ice: Pixi=%d GEBCO=%d\n", xGlobal, yGlobal, sample[0], gebcoIce)
-				return
 			}
 			if sample[1] != gebcoSubIce {
 				fmt.Printf("mismatch at (%d,%d) for sub-ice: Pixi=%d GEBCO=%d\n", xGlobal, yGlobal, sample[1], gebcoSubIce)
-				return
 			}
 			if sample[2] != gebcoTid {
 				fmt.Printf("mismatch at (%d,%d) for type ID: Pixi=%d GEBCO=%d\n", xGlobal, yGlobal, sample[2], gebcoTid)
-				return
+			}
+
+			if (gebcoTilePixelIndex+1)%(gebco.GtiffSize/8) == 0 {
+				fmt.Printf("GEBCO tile %d/%d pixels verified: %d/%d\n", gebcoTileIndex+1, len(allGebcoFiles), gebcoTilePixelIndex+1, gebco.GtiffSize)
 			}
 		}
+		fmt.Printf("Verified GEBCO tile %d/%d in %v\n", gebcoTileIndex+1, len(allGebcoFiles), time.Since(startTime).Seconds())
 	}
 }
 
