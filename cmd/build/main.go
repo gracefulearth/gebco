@@ -162,10 +162,7 @@ func main() {
 		opts...,
 	)
 
-	gebcoTilePixelTracker := gebco.GtiffSize // start beyond end so first pixel is 0,0 and we know to load a new tile
 	gebcoTileTracker := -1
-	xGebcoTile := -1
-	yGebcoTile := -1
 	var gebcoIceTile image.Image
 	var gebcoSubIceTile image.Image
 	var gebcoTidTile image.Image
@@ -173,12 +170,13 @@ func main() {
 	iterator := gebco.NewGebcoTileOrderWriteIterator(pixiFile, summary.Header, highResLayer)
 	err = summary.AppendIterativeLayer(pixiFile, highResLayer, iterator, func(dstIterator gopixi.IterativeLayerWriter) error {
 		for dstIterator.Next() {
-			if gebcoTilePixelTracker >= gebco.GtiffSize {
-				gebcoTileTracker += 1
-				xGebcoTile = gebcoTileTracker % gebco.TilesX
-				yGebcoTile = gebcoTileTracker / gebco.TilesX
-				gebcoTilePixelTracker = 0
+			coord := dstIterator.Coordinate()
+			gebcoTile := coord[0]/gebco.GtiffTileSize + (coord[1]/gebco.GtiffTileSize)*gebco.TilesX
+			xGebcoTile := gebcoTile % gebco.TilesX
+			yGebcoTile := gebcoTile / gebco.TilesX
 
+			if gebcoTile != gebcoTileTracker {
+				gebcoTileTracker = gebcoTile
 				gebcoFile := allGebcoFiles[gebcoTileTracker]
 
 				fmt.Println("Loading GEBCO layer tile:", xGebcoTile, yGebcoTile, gebcoFile.ice.FileName(), gebcoFile.subIce.FileName(), gebcoFile.tid.FileName())
@@ -188,13 +186,12 @@ func main() {
 				}
 				fmt.Println("Loaded GEBCO layer tile")
 			} else {
-				gebcoTilePixelTracker += 1
-				if gebcoTilePixelTracker%(gebco.GtiffSize/8) == 0 {
-					fmt.Println("GEBCO tile pixels processed:", gebcoTilePixelTracker, "/", gebco.GtiffSize)
+				gebcoTilePixel := (coord[0] % gebco.GtiffTileSize) + (coord[1]%gebco.GtiffTileSize)*gebco.GtiffTileSize
+				if gebcoTilePixel%(gebco.GtiffSize/8) == 0 {
+					fmt.Println("GEBCO tile pixels processed:", gebcoTilePixel, "/", gebco.GtiffSize)
 				}
 			}
 
-			coord := dstIterator.Coordinate()
 			xInGebcoTile := coord[0] - (xGebcoTile * gebco.GtiffTileSize)
 			yInGebcoTile := coord[1] - (yGebcoTile * gebco.GtiffTileSize)
 			iceValue := gebcoIceTile.At(xInGebcoTile, yInGebcoTile).(colorext.GrayS16).Y
