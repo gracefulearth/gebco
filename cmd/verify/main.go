@@ -3,24 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"image"
 	"image/color"
 	"os"
-	"path"
-	"sync"
 	"time"
 
 	"github.com/gracefulearth/gebco"
 	"github.com/gracefulearth/go-colorext"
 	"github.com/gracefulearth/gopixi"
-	"github.com/gracefulearth/image/tiff"
 )
-
-type gebcoLayerTile struct {
-	ice    gebco.GebcoTifFile
-	subIce gebco.GebcoTifFile
-	tid    gebco.GebcoTifFile
-}
 
 func main() {
 	pixiSrcArg := flag.String("pixiSrc", "", "Path to source Pixi file to verify")
@@ -34,52 +24,15 @@ func main() {
 	}
 
 	// get GEBCO files
-	plusIceFiles := gebco.GebcoTiles(*yearArg, gebco.GebcoDataIce)
-	subIceFiles := gebco.GebcoTiles(*yearArg, gebco.GebcoDataSubIce)
-	tidFiles := gebco.GebcoTiles(*yearArg, gebco.GebcoDataTypeId)
-	allGebcoFiles := make([]gebcoLayerTile, len(plusIceFiles))
-	for i := range plusIceFiles {
-		// relying on consistent ordering of GebcoTiles function here
-		allGebcoFiles[i] = gebcoLayerTile{
-			ice:    plusIceFiles[i],
-			subIce: subIceFiles[i],
-			tid:    tidFiles[i],
-		}
-	}
+	allGebcoFiles := gebco.GebcoLayeredTiles(*yearArg)
 
-	files, err := os.ReadDir(*gebcoSrcArg)
-	if err != nil {
-		fmt.Printf("failed to read source directory: %v\n", err)
+	missing := gebco.CheckDirectoryComplete(*gebcoSrcArg, allGebcoFiles)
+	if len(missing) > 0 {
+		fmt.Printf("missing %d GEBCO files:\n", len(missing))
+		for _, miss := range missing {
+			fmt.Printf(" - %s\n", miss)
+		}
 		return
-	}
-
-	for _, gebcoFile := range allGebcoFiles {
-		foundIce := false
-		foundSubIce := false
-		foundTid := false
-		for _, file := range files {
-			if file.Name() == gebcoFile.ice.FileName() {
-				foundIce = true
-			}
-			if file.Name() == gebcoFile.subIce.FileName() {
-				foundSubIce = true
-			}
-			if file.Name() == gebcoFile.tid.FileName() {
-				foundTid = true
-			}
-		}
-		if !foundIce {
-			fmt.Printf("missing GEBCO file: %s\n", gebcoFile.ice.FileName())
-			return
-		}
-		if !foundSubIce {
-			fmt.Printf("missing GEBCO file: %s\n", gebcoFile.subIce.FileName())
-			return
-		}
-		if !foundTid {
-			fmt.Printf("missing GEBCO file: %s\n", gebcoFile.tid.FileName())
-			return
-		}
 	}
 
 	// open Pixi file to compare against
@@ -104,7 +57,7 @@ func main() {
 	sample := make(gopixi.Sample, 3)
 	// iterate over GEBCO tiles and compare against Pixi data
 	for gebcoTileIndex, gebcoTile := range allGebcoFiles {
-		iceTile, subIceTile, tidTile, err := loadGebcoTileLayer(*gebcoSrcArg, gebcoTile)
+		iceTile, subIceTile, tidTile, err := gebcoTile.Load(*gebcoSrcArg)
 		if err != nil {
 			fmt.Printf("failed to load GEBCO tile layer: %v\n", err)
 			return
@@ -152,46 +105,4 @@ func main() {
 		totalTileTime := time.Since(startTime)
 		fmt.Printf("Verified GEBCO tile %d/%d in %v\n", gebcoTileIndex+1, len(allGebcoFiles), totalTileTime.Seconds())
 	}
-}
-
-func loadGebcoTileLayer(folder string, layer gebcoLayerTile) (ice, subIce, tid image.Image, err error) {
-	var iceErr, subIceErr, tidErr error
-
-	wg := sync.WaitGroup{}
-	wg.Go(func() {
-		ice, iceErr = loadGebcoTile(path.Join(folder, layer.ice.FileName()))
-	})
-	wg.Go(func() {
-		subIce, subIceErr = loadGebcoTile(path.Join(folder, layer.subIce.FileName()))
-	})
-	wg.Go(func() {
-		tid, tidErr = loadGebcoTile(path.Join(folder, layer.tid.FileName()))
-	})
-	wg.Wait()
-
-	if iceErr != nil {
-		return nil, nil, nil, iceErr
-	}
-	if subIceErr != nil {
-		return nil, nil, nil, subIceErr
-	}
-	if tidErr != nil {
-		return nil, nil, nil, tidErr
-	}
-	return ice, subIce, tid, nil
-}
-
-func loadGebcoTile(path string) (image.Image, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open GEBCO file %s: %w", path, err)
-	}
-	defer file.Close()
-
-	img, err := tiff.Decode(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode GEBCO file %s: %w", path, err)
-	}
-
-	return img, nil
 }

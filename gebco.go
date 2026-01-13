@@ -2,8 +2,14 @@ package gebco
 
 import (
 	"fmt"
+	"image"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+
+	"github.com/gracefulearth/image/tiff"
 )
 
 const (
@@ -110,6 +116,22 @@ func (g GebcoTifFile) FileName() string {
 	return fmt.Sprintf("gebco_%d%s_n%d.0_s%d.0_w%d.0_e%d.0.tif", g.year, g.data.fileString(), g.North(), g.South(), g.West(), g.East())
 }
 
+func (g GebcoTifFile) Load(folder string) (image.Image, error) {
+	path := filepath.Join(folder, g.FileName())
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open GEBCO file %s: %w", path, err)
+	}
+	defer file.Close()
+
+	img, err := tiff.Decode(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode GEBCO file %s: %w", path, err)
+	}
+
+	return img, nil
+}
+
 func (g *GebcoTifFile) UnmarshalText(text []byte) error {
 	strText := string(text)
 
@@ -146,6 +168,84 @@ func GebcoTiles(year int, dataType GebcoDataType) []GebcoTifFile {
 		}
 	}
 	return tiles
+}
+
+type GebcoTifLayer struct {
+	Ice    GebcoTifFile
+	SubIce GebcoTifFile
+	Tid    GebcoTifFile
+}
+
+func (layer GebcoTifLayer) Load(folder string) (ice, subIce, tid image.Image, err error) {
+	var iceErr, subIceErr, tidErr error
+
+	wg := sync.WaitGroup{}
+	wg.Go(func() {
+		ice, iceErr = layer.Ice.Load(folder)
+	})
+	wg.Go(func() {
+		subIce, subIceErr = layer.SubIce.Load(folder)
+	})
+	wg.Go(func() {
+		tid, tidErr = layer.Tid.Load(folder)
+	})
+	wg.Wait()
+
+	if iceErr != nil {
+		return nil, nil, nil, iceErr
+	}
+	if subIceErr != nil {
+		return nil, nil, nil, subIceErr
+	}
+	if tidErr != nil {
+		return nil, nil, nil, tidErr
+	}
+	return ice, subIce, tid, nil
+}
+
+func GebcoLayeredTiles(year int) []GebcoTifLayer {
+	tiles := make([]GebcoTifLayer, 0, TilesX*TilesY)
+	for y := range TilesY {
+		for x := range TilesX {
+			tiles = append(tiles, GebcoTifLayer{
+				Ice: GebcoTifFile{
+					x:    x,
+					y:    y,
+					year: year,
+					data: GebcoDataIce,
+				},
+				SubIce: GebcoTifFile{
+					x:    x,
+					y:    y,
+					year: year,
+					data: GebcoDataSubIce,
+				},
+				Tid: GebcoTifFile{
+					x:    x,
+					y:    y,
+					year: year,
+					data: GebcoDataTypeId,
+				},
+			})
+		}
+	}
+	return tiles
+}
+
+func CheckDirectoryComplete(folder string, layeredTiles []GebcoTifLayer) []string {
+	missingFiles := []string{}
+	for _, tile := range layeredTiles {
+		if _, err := os.Stat(filepath.Join(folder, tile.Ice.FileName())); os.IsNotExist(err) {
+			missingFiles = append(missingFiles, tile.Ice.FileName())
+		}
+		if _, err := os.Stat(filepath.Join(folder, tile.SubIce.FileName())); os.IsNotExist(err) {
+			missingFiles = append(missingFiles, tile.SubIce.FileName())
+		}
+		if _, err := os.Stat(filepath.Join(folder, tile.Tid.FileName())); os.IsNotExist(err) {
+			missingFiles = append(missingFiles, tile.Tid.FileName())
+		}
+	}
+	return missingFiles
 }
 
 type GebcoArc struct {
